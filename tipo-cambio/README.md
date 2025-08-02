@@ -309,4 +309,4 @@ The workflow includes robust error handling:
 
 **Last Updated**: August 2025  
 **Version**: 1.0  
-**Maintainer**: [Your Name/Team]
+**Maintainer**: Alexander Ramirez
