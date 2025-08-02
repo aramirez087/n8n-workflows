@@ -1,0 +1,462 @@
+{
+  "name": "TipoCambio",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "https://gee.bccr.fi.cr/IndicadoresEconomicos/Cuadros/frmConsultaTCVentanilla.aspx",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        16
+      ],
+      "id": "c6e7fbb1-5197-4c2e-9ffa-4d36c9a7ec20",
+      "name": "GetTipoCambio"
+    },
+    {
+      "parameters": {
+        "jsCode": "// N8N Code Node - Final BCR Exchange Rate Parser\n// Extracts Banco BAC San José S.A. exchange rates\n\nconst BANCO = \"Banco BAC San José S.A.\";\nlet compra = 0;\nlet venta = 0;\nlet success = false;\n\ntry {\n  const input = $input.first();\n  \n  if (input && input.json) {\n    // The HTML data is in one of the JSON keys (likely a numbered key like \"1\")\n    const jsonKeys = Object.keys(input.json);\n    \n    for (const key of jsonKeys) {\n      const value = input.json[key];\n      \n      // Check if this key contains string data with our target bank\n      if (typeof value === 'string' && value.includes(BANCO)) {\n        \n        // Extract rates using regex - look for two 3-digit,2-decimal numbers after the bank name\n        const bacMatch = value.match(/Banco BAC San José S\\.A\\.[\\s\\S]*?(\\d{3},\\d{2})[\\s\\S]*?(\\d{3},\\d{2})/);\n        \n        if (bacMatch && bacMatch.length >= 3) {\n          // Convert from Costa Rican format (comma as decimal) to standard format\n          const compraText = bacMatch[1].replace(',', '.');\n          const ventaText = bacMatch[2].replace(',', '.');\n          \n          compra = parseFloat(compraText) || 0;\n          venta = parseFloat(ventaText) || 0;\n          \n          if (compra > 0 && venta > 0) {\n            success = true;\n            break;\n          }\n        }\n      }\n    }\n  }\n  \n} catch (error) {\n  // Silent error handling - log error but don't break the workflow\n  console.error('Error parsing exchange rates:', error.message);\n}\n\n// Return the extracted values\nreturn [{ \n  json: { \n    compra: compra, \n    venta: venta,\n    timestamp: new Date().toISOString(),\n    success: success,\n    bank: BANCO\n  } \n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        16
+      ],
+      "id": "a5b33933-21a3-4850-baeb-427be58fb602",
+      "name": "ParseHTML"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "success-check",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "compra-check",
+              "leftValue": "={{ $json.compra }}",
+              "rightValue": "={{ 0 }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            },
+            {
+              "id": "venta-check",
+              "leftValue": "={{ $json.venta }}",
+              "rightValue": "={{ 0 }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1328,
+        16
+      ],
+      "id": "4fc74415-5b7e-4081-8ce2-27064c7ea42a",
+      "name": "CheckParsingSuccess"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "USD",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1552,
+        96
+      ],
+      "id": "195bc7d4-1cd6-4c93-9c54-87e6a8220c05",
+      "name": "RedisGet",
+      "credentials": {
+        "redis": {
+          "id": "1APHQ9C3yyTSy11N",
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0c4c8175-746e-4ed8-8e33-b2fe61ef94d6",
+              "leftValue": "={{ $('CheckParsingSuccess').item.json.compra !== $('ParseRedis').item.json.compra || $('CheckParsingSuccess').item.json.venta !== $('ParseRedis').item.json.venta }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2000,
+        96
+      ],
+      "id": "05f515a6-1966-4714-9422-43a8023a1633",
+      "name": "HasChanged"
+    },
+    {
+      "parameters": {
+        "chatId": "-1001288938210",
+        "text": "=Compra: ₡{{ $('CheckParsingSuccess').item.json.compra }} | Venta: ₡{{ $('CheckParsingSuccess').item.json.venta }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2224,
+        288
+      ],
+      "id": "382c2feb-3e3c-4f49-a37c-02940903aa96",
+      "name": "NotifyChannel",
+      "webhookId": "1903109a-78bf-4d63-bc62-50d9c4d13450",
+      "credentials": {
+        "telegramApi": {
+          "id": "UbxyNb41KpyNaX6Z",
+          "name": "bot_tipo_cambio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "USD",
+        "value": "={\"compra\": {{ $('CheckParsingSuccess').item.json.compra }}, \"venta\": {{ $('CheckParsingSuccess').item.json.venta }}, \"timestamp\": \"{{ new Date().toISOString() }}\"}"
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2224,
+        -96
+      ],
+      "id": "6a8a108e-6e70-444f-8351-755e1697bf42",
+      "name": "RedisSave",
+      "credentials": {
+        "redis": {
+          "id": "1APHQ9C3yyTSy11N",
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log the successful execution\nconst input = $input.first();\nconst compra = input.json.current_compra;\nconst venta = input.json.current_venta;\n\nconst timestamp = new Date().toISOString();\n\nconsole.log('📊 EXCHANGE RATES UPDATED:');\nconsole.log(`   Compra: ₡${compra}`);\nconsole.log(`   Venta: ₡${venta}`);\nconsole.log(`   Timestamp: ${timestamp}`);\nconsole.log('   📢 Notification sent');\nconsole.log('   💾 Data saved to Redis');\nconsole.log('─'.repeat(50));\n\n// Return data for potential future use\nreturn [{\n  json: {\n    current_compra: compra,\n    current_venta: venta,\n    timestamp: timestamp,\n    processed: true\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2224,
+        96
+      ],
+      "id": "9974bab9-71b1-499b-b818-dfc17d608479",
+      "name": "LogSuccess"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log when no changes detected or parsing failed\nconst input = $input.first();\n\nconsole.log('ℹ️  WORKFLOW COMPLETED - NO ACTION TAKEN');\nif (input.json && input.json.success === false) {\n  console.log('   Reason: Failed to parse exchange rates from HTML');\n} else {\n  console.log('   Reason: No changes detected in exchange rates');\n}\nconsole.log(`   Timestamp: ${new Date().toISOString()}`);\nconsole.log('─'.repeat(50));\n\nreturn [{\n  json: {\n    status: 'no_action',\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        -96
+      ],
+      "id": "fda6c29e-0d5a-4e0b-9d2b-790bc5fa1473",
+      "name": "LogNoAction"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Access the data from the previous node\nconst data = $input.all()[0].json;\n\n// Check if Redis returned any data\nif (!data || !data.propertyName || data.propertyName === null) {\n  console.log('No data found in Redis - first run or key not found');\n  return [{\n    json: {\n      compra: 0,\n      venta: 0,\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// Redis has data - parse it\nlet jsonString;\nif (data.propertyName) {\n  jsonString = data.propertyName;\n} else if (typeof data === 'string') {\n  jsonString = data;\n} else {\n  jsonString = JSON.stringify(data);\n}\n\ntry {\n  // Parse the JSON string\n  const parsedData = JSON.parse(jsonString);\n  \n  // Extract and convert to integers\n  const compra = parseInt(parsedData.compra) || 0;\n  const venta = parseInt(parsedData.venta) || 0;\n  const timestamp = parsedData.timestamp || new Date().toISOString();\n  \n  console.log('Original data:', data);\n  console.log('Parsed data:', parsedData);\n  console.log('Compra (int):', compra);\n  console.log('Venta (int):', venta);\n  \n  return [{\n    json: {\n      compra: compra,\n      venta: venta,\n      timestamp: timestamp\n    }\n  }];\n  \n} catch (error) {\n  console.log('Error parsing Redis data:', error.message);\n  return [{\n    json: {\n      compra: 0,\n      venta: 0,\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1776,
+        96
+      ],
+      "id": "7c568369-3416-4bea-a23f-73515cb0d8eb",
+      "name": "ParseRedis"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 8-17 * * 1-5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        656,
+        16
+      ],
+      "id": "65d6a75b-59da-4cee-b2ba-35a5bdcb0771",
+      "name": "Every5Min",
+      "notes": "Every 5mins mon-fri 8-5pm"
+    },
+    {
+      "parameters": {
+        "content": "## 🏦 Costa Rica Exchange Rate Monitor\n\n**Purpose:** Monitors Banco BAC San José exchange rates and sends Telegram notifications when rates change.\n\n**Source:** Central Bank of Costa Rica (BCCR) official website\n**Schedule:** Every 5 minutes, Monday-Friday, 8AM-5PM (Costa Rica business hours)\n**Target Bank:** Banco BAC San José S.A.",
+        "height": 264,
+        "width": 400
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        656,
+        -288
+      ],
+      "id": "aa2dc903-e49e-4035-9400-5ce91647054b",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## ⚙️ Required Setup\n\n**1. Redis Database:**\n- Create Redis credentials named \"Redis\"\n- Used to store previous exchange rates\n- Key: \"USD\" stores JSON with compra/venta values\n\n**2. Telegram Bot:**\n- Create credentials named \"bot_tipo_cambio\"\n- Update Chat ID (-1001288938210) to your channel/group\n- Bot needs permission to send messages",
+        "height": 320,
+        "width": 414
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1088,
+        -336
+      ],
+      "id": "33ec915f-74d5-4101-8829-7bf140f0176b",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "## 🔄 Workflow Logic\n\n1. **Fetch** exchange rates from BCCR website\n2. **Parse** HTML to extract BAC bank rates  \n3. **Validate** parsing was successful\n4. **Compare** with stored rates in Redis\n5. **Notify** via Telegram if rates changed\n6. **Store** new rates in Redis for next comparison",
+        "height": 268,
+        "width": 300
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1520,
+        -400
+      ],
+      "id": "ce7fbfc7-4163-416d-9915-fa1fea5d6f1c",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "## 🎯 Data Flow\n\n**Success Path:** Schedule → Fetch → Parse → Validate → Get Redis → Compare → Send Notification + Save Redis\n\n**No Change Path:** Schedule → Fetch → Parse → Validate → Get Redis → Compare → Log (No Action)\n\n**Parse Failure Path:** Schedule → Fetch → Parse → Validate (Fail) → Log (No Action)",
+        "height": 280,
+        "width": 350
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1840,
+        -224
+      ],
+      "id": "52bf2e38-37db-4f5a-923d-c83d9759833b",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "## 📊 Rate Parsing\n\nExtracts exchange rates from HTML using regex pattern:\n- Searches for \"Banco BAC San José S.A.\"\n- Finds two numbers in format XXX,XX (Costa Rican decimal format)\n- Converts comma to dot for standard decimal format\n- First number = Compra (Buy rate)\n- Second number = Venta (Sell rate)",
+        "height": 316,
+        "width": 280
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        992,
+        224
+      ],
+      "id": "29ada824-30b2-4b9e-8ed4-a04e00bfd433",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "## ✅ Validation Checks\n\n1. **Success flag** must be true\n2. **Compra rate** must be > 0  \n3. **Venta rate** must be > 0\n\nAll conditions must pass for workflow to continue. If any fail, workflow logs \"No Action\" and stops.",
+        "height": 248,
+        "width": 280
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1328,
+        256
+      ],
+      "id": "b50913f4-e09d-458f-a7fc-071f762f6c0d",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "content": "## 🔍 Change Detection\n\nCompares current rates with stored Redis data:\n- If **any rate differs** → Send notification & update Redis\n- If **rates are same** → Log \"No changes\" and stop\n- If **Redis empty** (first run) → Always send notification",
+        "height": 260,
+        "width": 280
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1904,
+        272
+      ],
+      "id": "567edcb0-159c-4a08-9a23-85a5140503b5",
+      "name": "Sticky Note6"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "GetTipoCambio": {
+      "main": [
+        [
+          {
+            "node": "ParseHTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ParseHTML": {
+      "main": [
+        [
+          {
+            "node": "CheckParsingSuccess",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CheckParsingSuccess": {
+      "main": [
+        [
+          {
+            "node": "RedisGet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HasChanged",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "LogNoAction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RedisGet": {
+      "main": [
+        [
+          {
+            "node": "ParseRedis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HasChanged": {
+      "main": [
+        [
+          {
+            "node": "NotifyChannel",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RedisSave",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "LogSuccess",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ParseRedis": {
+      "main": [
+        [
+          {
+            "node": "HasChanged",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every5Min": {
+      "main": [
+        [
+          {
+            "node": "GetTipoCambio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "841ec305-608e-4a2e-844c-96844b69fa12",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8da7bee76c0d078f1a19d394eaf1b67c1c2ac60a653cd832cc4e04c0a1011adf"
+  },
+  "id": "LKjXjbNo5JCMqeIw",
+  "tags": []
+}
